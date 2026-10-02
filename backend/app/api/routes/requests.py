@@ -1,11 +1,29 @@
-from fastapi import APIRouter, status
+from typing import Annotated
+from uuid import UUID
 
-from app.schemas.requests import RequestAccepted, RequestCreate
-from app.services.requests import accept_request
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
+
+from app.db.session import get_session
+from app.schemas.requests import RequestCreate, RequestCreated, RequestRead
+from app.services import requests as request_service
 
 router = APIRouter(prefix="/api/v1/requests", tags=["requests"])
 
 
-@router.post("", response_model=RequestAccepted, status_code=status.HTTP_202_ACCEPTED)
-def create_request(request: RequestCreate) -> RequestAccepted:
-    return accept_request(request)
+SessionDependency = Annotated[Session, Depends(get_session)]
+
+
+@router.post("", response_model=RequestCreated, status_code=status.HTTP_201_CREATED)
+def create_request(request: RequestCreate, response: Response, session: SessionDependency) -> RequestCreated:
+    created = request_service.create_request(session, request)
+    response.headers["Location"] = f"/api/v1/requests/{created.request_uuid}"
+    return created
+
+
+@router.get("/{request_uuid}", response_model=RequestRead)
+def get_request(request_uuid: UUID, session: SessionDependency) -> RequestRead:
+    request = request_service.get_request(session, request_uuid)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return request

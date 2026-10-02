@@ -1,0 +1,14 @@
+# Only application and migration inputs enter the build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!alembic.ini
+!app/
+!app/**
+!alembic/
+!alembic/**
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*

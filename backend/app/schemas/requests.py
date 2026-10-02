@@ -1,21 +1,11 @@
-from enum import Enum
+from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class RequestSource(str, Enum):
-    API = "api"
-
-
-class RequestPriority(str, Enum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-
-
-class AcceptanceStatus(str, Enum):
-    ACCEPTED = "accepted"
+from app.core.enums import RequestCategory, RequestPriority, RequestSource, RequestStatus
 
 
 class RequestCreate(BaseModel):
@@ -27,8 +17,23 @@ class RequestCreate(BaseModel):
     priority: RequestPriority = RequestPriority.NORMAL
 
 
-class RequestAccepted(BaseModel):
-    request_id: UUID
-    status: AcceptanceStatus = AcceptanceStatus.ACCEPTED
-    persisted: bool = False
-    message: str = "Request accepted for validation only; it has not been stored or queued for processing."
+class RequestSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    request_uuid: UUID
+    source: RequestSource
+    priority: RequestPriority
+    status: RequestStatus
+    category: RequestCategory | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RequestCreated(RequestSummary):
+    persisted: Literal[True] = True
+    message: str = "Request stored with an audit event; no processing has been queued."
+
+
+class RequestRead(RequestSummary):
+    patient_reference: str
+    request_text: str
