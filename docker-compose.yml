@@ -1,0 +1,153 @@
+x-backend-environment: &backend-environment
+  APP_NAME: ${APP_NAME:-AI Healthcare Workflow Automation Platform}
+  APP_ENVIRONMENT: ${APP_ENVIRONMENT:-development}
+  APP_VERSION: ${APP_VERSION:-0.4.0}
+  APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+  APP_HOST: 0.0.0.0
+  APP_PORT: 8000
+  # Internal service DNS/port; never use the host's localhost URL here.
+  DATABASE_URL: ""
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+  DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-3}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-3}
+  DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-3000}
+  DB_STARTUP_ATTEMPTS: ${DB_STARTUP_ATTEMPTS:-15}
+  DB_RETRY_INTERVAL_SECONDS: ${DB_RETRY_INTERVAL_SECONDS:-2}
+  DB_MIGRATION_LOCK_TIMEOUT_SECONDS: ${DB_MIGRATION_LOCK_TIMEOUT_SECONDS:-30}
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.41.6
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    networks: [app]
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_WEBHOOK_URL: http://localhost:${N8N_PORT:-5678}/
+      N8N_EDITOR_BASE_URL: http://localhost:${N8N_PORT:-5678}/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set a persistent N8N_ENCRYPTION_KEY in .env}
+      # Local HTTP only; n8n is bound to loopback, not exposed publicly.
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES: "true"
+      N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_LOG_LEVEL: warn
+      N8N_LOG_OUTPUT: console
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
+      EXECUTIONS_DATA_SAVE_ON_ERROR: none
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      # n8n briefly persists in-flight inputs even when saving is disabled.
+      EXECUTIONS_DATA_HARD_DELETE_BUFFER: 0
+      EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL: 1
+      EXECUTIONS_TIMEOUT: 30
+      EXECUTIONS_TIMEOUT_MAX: 60
+      N8N_RUNNERS_TASK_TIMEOUT: 30
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      TZ: ${GENERIC_TIMEZONE:-UTC}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz/readiness').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  backend:
+    build: ./backend
+    environment: *backend-environment
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=12).close()"]
+      interval: 10s
+      timeout: 15s
+      start_period: 15s
+      retries: 3
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  migrate:
+    build: ./backend
+    environment: *backend-environment
+    command: ["python", "-m", "app.db.migrate"]
+    restart: "no"
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  postgres:
+    image: postgres:17
+    command: ["postgres", "-c", "log_error_verbosity=terse", "-c", "log_min_error_statement=panic", "-c", "log_parameter_max_length_on_error=0"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [app]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  postgres-test:
+    image: postgres:17
+    command: ["postgres", "-c", "log_error_verbosity=terse", "-c", "log_min_error_statement=panic", "-c", "log_parameter_max_length_on_error=0"]
+    profiles: ["test"]
+    networks: [app]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: healthcare_test
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-5433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d healthcare_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  n8n_data:

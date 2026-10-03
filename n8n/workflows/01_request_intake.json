@@ -1,0 +1,310 @@
+{
+  "id": "healthcareRequestIntake01",
+  "name": "Healthcare Request Intake",
+  "nodes": [
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c001",
+      "name": "Intake webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "78be94af-b805-49ac-9f2f-a3d023070001",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "healthcare-request-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c002",
+      "name": "Validate and normalize envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Only validate the transport envelope. FastAPI owns all field/business validation.\nconst body = $input.first().json.body;\nif (body === null || typeof body !== 'object' || Array.isArray(body)) {\n  return [{ json: { forward: false, response_status: 400,\n    response_body: { detail: 'Expected a JSON object request body' } } }];\n}\n// Keep unknown fields so FastAPI can reject them; identify this orchestration channel.\nreturn [{ json: { forward: true, payload: { ...body, source: 'n8n' } } }];"
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c003",
+      "name": "Valid JSON object?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-forward",
+              "leftValue": "={{ $json.forward }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c004",
+      "name": "Create request in FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        -120
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/requests",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 10000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c005",
+      "name": "Check backend response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// Do not expose HTTP node errors, upstream headers, or submitted input to the caller.\nconst upstream = $input.first().json;\nconst status = Number(upstream.statusCode);\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (status === 201 && body && body.persisted === true &&\n    typeof body.request_uuid === 'string' && uuid.test(body.request_uuid)) {\n  const response = {};\n  for (const key of ['request_uuid', 'source', 'priority', 'status', 'category',\n    'created_at', 'updated_at', 'persisted', 'message']) {\n    if (Object.prototype.hasOwnProperty.call(body, key)) response[key] = body[key];\n  }\n  return [{ json: { success: true, response_status: 201, response_body: response } }];\n}\nif (status === 422) {\n  // Allowlist field names and error codes; never reflect submitted values/unknown keys.\n  const fields = ['patient_reference', 'request_text', 'source', 'priority'];\n  const errors = Array.isArray(body?.detail) ? body.detail.map(error => ({\n    field: fields.includes(error.loc?.[1]) ? error.loc[1] : 'body',\n    type: typeof error.type === 'string' && /^[a-z_]+$/.test(error.type)\n      ? error.type : 'validation_error'\n  })) : [];\n  return [{ json: { success: false, response_status: 422,\n    response_body: { detail: 'Request validation failed', errors } } }];\n}\nconst errorText = typeof upstream.error === 'string' ? upstream.error\n  : String(upstream.error?.message ?? upstream.error?.code ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(errorText);\nconst responseStatus = timeout ? 504 : status === 503 ? 503 : 502;\nreturn [{ json: { success: false, response_status: responseStatus,\n  response_body: { detail: timeout ? 'Backend request timed out; outcome is unknown. Do not retry automatically.'\n    : status === 503 ? 'Backend temporarily unavailable'\n    : 'Backend request failed; outcome may be unknown. Do not retry automatically.' } } }];"
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c006",
+      "name": "Request persisted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c007",
+      "name": "Success response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1460,
+        -240
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c008",
+      "name": "Error response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1460,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c009",
+      "name": "Synthetic data only",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -360
+      ],
+      "parameters": {
+        "content": "## Healthcare Request Intake\nSynthetic data only. FastAPI owns field validation, persistence and the audit transaction.\n\nNo POST retries: a timeout may happen after commit. The fixed backend URL is an internal Compose service, not a secret. No credentials or pinned input belong in this export.\n\nExecution payload saving is disabled. Publish to use /webhook/healthcare-request-intake.",
+        "height": 240,
+        "width": 650
+      }
+    }
+  ],
+  "connections": {
+    "Intake webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and normalize envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and normalize envelope": {
+      "main": [
+        [
+          {
+            "node": "Valid JSON object?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid JSON object?": {
+      "main": [
+        [
+          {
+            "node": "Create request in FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create request in FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Check backend response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check backend response": {
+      "main": [
+        [
+          {
+            "node": "Request persisted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request persisted?": {
+      "main": [
+        [
+          {
+            "node": "Success response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 30,
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "timezone": "UTC"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

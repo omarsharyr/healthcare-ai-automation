@@ -19,3 +19,4 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+n8n/*.local.json

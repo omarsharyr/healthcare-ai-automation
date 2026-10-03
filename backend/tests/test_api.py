@@ -11,9 +11,12 @@ from app.models import AuditEvent, Request
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("source", ["api", "n8n"])
 def test_valid_request(
     db_client: TestClient, db_sessions: sessionmaker[Session], synthetic_request: dict[str, str],
+    source: str,
 ) -> None:
+    synthetic_request["source"] = source
     response = db_client.post("/api/v1/requests", json=synthetic_request)
     assert response.status_code == 201
     body = response.json()
@@ -22,6 +25,7 @@ def test_valid_request(
     assert body["status"] == "received"
     assert body["persisted"] is True
     assert body["category"] is None
+    assert body["source"] == source
     assert datetime.fromisoformat(body["created_at"]).utcoffset() is not None
     assert body["created_at"] == body["updated_at"]
     assert "patient_reference" not in body
@@ -37,7 +41,7 @@ def test_valid_request(
         assert len(events) == 1
         assert events[0].event_type == "REQUEST_RECEIVED"
         assert events[0].actor == "api"
-        assert events[0].event_metadata == {"source": "api", "priority": "normal"}
+        assert events[0].event_metadata == {"source": source, "priority": "normal"}
         assert events[0].created_at.utcoffset() is not None
     second = db_client.post("/api/v1/requests", json=synthetic_request)
     assert second.status_code == 201
@@ -89,3 +93,14 @@ def test_get_invalid_uuid(db_client: TestClient) -> None:
     response = db_client.get("/api/v1/requests/not-a-uuid")
     assert response.status_code == 422
     assert "input" not in response.json()["detail"][0]
+
+
+def test_invalid_source_creates_no_records(
+    db_client: TestClient, db_sessions: sessionmaker[Session], synthetic_request: dict[str, str],
+) -> None:
+    synthetic_request["source"] = "unknown"
+    response = db_client.post("/api/v1/requests", json=synthetic_request)
+    assert response.status_code == 422
+    with db_sessions() as session:
+        assert session.scalar(select(func.count()).select_from(Request)) == 0
+        assert session.scalar(select(func.count()).select_from(AuditEvent)) == 0

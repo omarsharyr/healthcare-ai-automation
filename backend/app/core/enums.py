@@ -3,6 +3,7 @@ from enum import Enum
 
 class RequestSource(str, Enum):
     API = "api"
+    N8N = "n8n"
 
 
 class RequestPriority(str, Enum):
