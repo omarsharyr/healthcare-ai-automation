@@ -11,7 +11,7 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    request_id: Mapped[int] = mapped_column(
+    request_id: Mapped[int | None] = mapped_column(
         ForeignKey("requests.id", ondelete="RESTRICT"), index=True,
     )
     event_type: Mapped[str] = mapped_column(String(64))

@@ -1,0 +1,428 @@
+{
+  "id": "healthcareAgentOperations02",
+  "name": "Healthcare Agent Operations",
+  "nodes": [
+    {
+      "id": "agent-agent-webhook",
+      "name": "Agent webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "healthcare-agent-operations",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "f44ff046-b236-43bc-9625-83fcd1bce006"
+    },
+    {
+      "id": "agent-validate-envelope",
+      "name": "Validate envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst valid = body !== null && typeof body === 'object' && !Array.isArray(body);\nreturn [{json: valid ? {valid:true, payload:body} : {valid:false, response_status:400, response_body:{detail:'Expected a JSON object'}}}];"
+      }
+    },
+    {
+      "id": "agent-valid-envelope",
+      "name": "Valid envelope?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "agent-run-controlled-agent",
+      "name": "Run controlled agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/agent/run",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 45000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "agent-check-agent-response",
+      "name": "Check agent response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const upstream = $input.first().json;\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (upstream.statusCode === 200 && body && uuid.test(body.run_uuid) &&\n    ['completed','fallback'].includes(body.status) && typeof body.escalated === 'boolean' &&\n    typeof body.human_action_required === 'boolean' && Array.isArray(body.tools_used) && Array.isArray(body.results)) {\n  const response = {};\n  for (const key of ['run_uuid','response','tools_used','results','escalated','human_action_required','status']) response[key] = body[key];\n  return [{json:{success:true, escalated:body.escalated, response_status:200, response_body:response}}];\n}\nconst error = typeof upstream.error === 'string' ? upstream.error : String(upstream.error?.message ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT/i.test(error);\nreturn [{json:{success:false,response_status:timeout ? 504 : upstream.statusCode === 422 ? 422 : upstream.statusCode === 503 ? 503 : 502,\n  response_body:{detail:'Agent operation was not confirmed. Inspect the API/review queue before retrying; do not retry automatically.'}}}];"
+      }
+    },
+    {
+      "id": "agent-agent-responded",
+      "name": "Agent responded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1150,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "agent-if-escalated",
+      "name": "IF Escalated",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1380,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-escalated",
+              "leftValue": "={{ $json.escalated }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "agent-human-review",
+      "name": "Human Review",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        -130
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "agent-return-result",
+      "name": "Return Result",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        130
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "agent-audit-committed-by-fastapi",
+      "name": "Audit committed by FastAPI",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "agent-response",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2070,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-error-response",
+      "name": "Error response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1380,
+        350
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-scope-and-safety",
+      "name": "Scope and safety",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        350,
+        -380
+      ],
+      "parameters": {
+        "content": "## Synthetic data only\nFastAPI owns tool authorization, validation, execution, limits and audit. Human Review is a display branch: any review was already created by FastAPI. No approval/rejection tool is exposed.\n\nFallback may have escalated=false and human_action_required=true (for example timeout or missing UUID). Return Result preserves this flag; a human must investigate. Audit node documents the backend commit; it does not create a second audit. No prompts are pinned or saved intentionally.",
+        "height": 280,
+        "width": 870
+      }
+    }
+  ],
+  "connections": {
+    "Agent webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate envelope": {
+      "main": [
+        [
+          {
+            "node": "Valid envelope?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid envelope?": {
+      "main": [
+        [
+          {
+            "node": "Run controlled agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run controlled agent": {
+      "main": [
+        [
+          {
+            "node": "Check agent response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check agent response": {
+      "main": [
+        [
+          {
+            "node": "Agent responded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent responded?": {
+      "main": [
+        [
+          {
+            "node": "IF Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Escalated": {
+      "main": [
+        [
+          {
+            "node": "Human Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Review": {
+      "main": [
+        [
+          {
+            "node": "Audit committed by FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Result": {
+      "main": [
+        [
+          {
+            "node": "Audit committed by FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit committed by FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 60,
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "timezone": "UTC"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

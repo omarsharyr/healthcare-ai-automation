@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.routes import health, requests, reviews
+from app.api.routes import agent, health, requests, reviews
 from app.core.config import get_settings
 from app.services.errors import WorkflowError
 
@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(requests.router)
     application.include_router(reviews.router)
+    application.include_router(agent.router)
 
     @application.exception_handler(WorkflowError)
     async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONResponse:

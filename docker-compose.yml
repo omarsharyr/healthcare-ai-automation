@@ -1,7 +1,7 @@
 x-backend-environment: &backend-environment
   APP_NAME: ${APP_NAME:-AI Healthcare Workflow Automation Platform}
   APP_ENVIRONMENT: ${APP_ENVIRONMENT:-development}
-  APP_VERSION: ${APP_VERSION:-0.5.0}
+  APP_VERSION: ${APP_VERSION:-0.6.0}
   APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
   APP_HOST: 0.0.0.0
   APP_PORT: 8000
@@ -81,6 +81,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-20}
+      AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-5}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-25}
+      AGENT_ALLOW_GLOBAL_COUNT: ${AGENT_ALLOW_GLOBAL_COUNT:-true}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     networks: [app]

@@ -4,7 +4,7 @@ A portfolio project for a Workflow Automation Specialist role, built incremental
 
 **Use only synthetic/fake healthcare data. This application is not HIPAA compliant.** HIPAA-conscious practices are educational goals, not a compliance claim. Pattern-based redaction is incomplete, and there is no application authentication; use locally with fake data only.
 
-## Phase 5 scope
+## Phase 6 scope
 
 - FastAPI, Pydantic validation, and SQLAlchemy 2.x with PostgreSQL via psycopg 3.
 - Persisted requests and `REQUEST_RECEIVED` audit events in one transaction.
@@ -16,7 +16,10 @@ A portfolio project for a Workflow Automation Specialist role, built incremental
 - Deterministic sensitive-data redaction before classification; OpenAI provider abstraction and an offline fake provider.
 - Strict Pydantic AI validation and deterministic AUTO_PROCESS / HUMAN_REVIEW / REJECT rules.
 - Persisted decisions, transactional audit events, and human approval/rejection with duplicate-decision protection.
-- No application authentication, agents, Redis, dashboard, or background queue.
+- Controlled operations agent with five approved tools, UUID scope checks, execution limits, structured results and audits.
+- No application authentication, Redis, dashboard, or background queue.
+
+The **Healthcare Operations Agent** is available at `POST /api/v1/agent/run`. See [the agent architecture, Swagger/n8n demo and changed files](docs/controlled-agent.md). Its export is [02_agent_operations.json](n8n/workflows/02_agent_operations.json). The model can request read tools or human escalation; it cannot execute code, arbitrary SQL/HTTP, or approve/reject reviews. Scope checks constrain tool access within a run; they are not user authentication.
 
 The **Healthcare Request Automation** workflow, architecture, decision rules, API examples, and end-to-end verification are documented in [docs/ai-processing.md](docs/ai-processing.md). Import [n8n/workflows/01_healthcare_request_automation.json](n8n/workflows/01_healthcare_request_automation.json). The [Phase 4 intake guide](docs/n8n-intake.md) and original create-only workflow remain available.
 
@@ -31,7 +34,7 @@ Requires Docker Desktop/Engine running with Linux containers and a recent Docker
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, preserve existing credentials, set `APP_VERSION=0.5.0`, and add `AI_PROVIDER=fake` for the offline demo. Follow the [Phase 5 setup instructions](docs/ai-processing.md#configure-and-start). Do not commit `.env`.
+Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, preserve existing credentials, set `APP_VERSION=0.6.0`, and add `AI_PROVIDER=fake` for the offline demo. Follow the [Phase 6 setup instructions](docs/controlled-agent.md#start-and-configure). Do not commit `.env`.
 
 ```powershell
 docker compose config --quiet
@@ -95,6 +98,9 @@ App settings live in `backend/app/core/config.py`; database settings live separa
 | `OPENAI_API_KEY` | Backend-only secret, needed for the real provider; blank in template |
 | `OPENAI_MODEL` | Structured-output model, defaults to `gpt-4.1-mini` |
 | `AI_TIMEOUT_SECONDS` | Provider HTTP timeout, defaults to 20, allowed 1–30 |
+| `AGENT_MAX_TOOL_CALLS` | Maximum tool attempts per run, defaults to 5, allowed 1–10 |
+| `AGENT_TIMEOUT_SECONDS` | Planning/tool execution deadline, defaults to 25, allowed 0.1–40 |
+| `AGENT_ALLOW_GLOBAL_COUNT` | Server policy for aggregate pending-review counts, defaults to true |
 | `API_PORT` | Compose host API port, defaults to 8000 |
 | `N8N_PORT` | Local n8n editor/webhook port, defaults to 5678 |
 | `N8N_ENCRYPTION_KEY` | Required stable secret for n8n credential encryption |
@@ -182,7 +188,7 @@ Application logs exclude bodies, `patient_reference`, `request_text`, raw paths/
 ## Models, transactions, and migrations
 
 - `requests`: bigint identity `id`, unique UUID `request_uuid`, reference/text, source, priority, status, nullable category/confidence/AI recommendation/system decision/decision reason, timezone-aware `created_at` and `updated_at`.
-- `audit_events`: bigint identity `id`, indexed `request_id` foreign key, event type, actor, JSONB `metadata`, and timezone-aware `created_at`. Its Python attribute is `event_metadata` because SQLAlchemy reserves `metadata`.
+- `audit_events`: bigint identity `id`, indexed nullable `request_id` foreign key, event type, actor, JSONB `metadata`, and timezone-aware `created_at`. Global agent audits have no request FK and correlate through `metadata.run_uuid`. Its Python attribute is `event_metadata` because SQLAlchemy reserves `metadata`.
 - `human_reviews`: unique request foreign key, PENDING/APPROVED/REJECTED status, AI recommendation, reviewer decision/notes, creation/review timestamps. Review resolution and completion audits commit together.
 - String enums have named database CHECK constraints. The UUID has a unique constraint/index; audits reference requests with deletion restricted. Audit data is not immutable/tamper-proof in this phase.
 - Routes handle HTTP only. The creation service flushes the request, inserts the audit, and commits both using `Session.begin()`. Errors roll back both; success is returned only after commit. Sessions are opened/closed per HTTP request.
@@ -213,7 +219,7 @@ docker compose --profile test stop postgres-test
 
 Tests require the host Python dependencies from the optional setup section. They use `TEST_DATABASE_URL` if set; otherwise they build a URL from `TEST_POSTGRES_HOST`, `TEST_POSTGRES_PORT`, and the POSTGRES credentials, always selecting `healthcare_test`. They never fall back to the application database URL/name. Each database test creates a unique schema, applies real Alembic migrations, then drops only that schema. Test credentials need schema-creation permissions. Missing/unavailable configuration fails integration tests instead of silently skipping them.
 
-Coverage includes persistence, readiness, startup retries, safe logs, migrations, redaction, validated classification, provider failures, decision thresholds, reviews, audits, and concurrent processing/review protection. Tests use fake providers and mocked HTTP; they require no paid LLM calls. See [workflow tests and live verification](docs/ai-processing.md#automated-tests). For tests without PostgreSQL:
+Coverage includes persistence, readiness, startup retries, safe logs, migrations, redaction, validated classification, provider failures, decision thresholds, reviews, audits, concurrent processing/review protection, and agent scope/limits/failure/rollback behavior. Tests use fake providers and mocked HTTP; they require no paid LLM calls. See [agent tests and live verification](docs/controlled-agent.md#tests-and-files). For tests without PostgreSQL:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -c backend/pytest.ini backend/tests -m "not integration"
@@ -230,7 +236,7 @@ backend/
     core/             # App/AI configuration and shared enums
     models/           # SQLAlchemy Request, AuditEvent and HumanReview
     db/               # Separate DB settings, engine, sessions, base
-    agents/           # Placeholder only
+    agents/           # Bounded planner, explicit registry, trusted tool execution
     main.py           # App factory and safe error responses
     start.py          # DB wait and structured Uvicorn startup
   alembic/            # Migration environment, template, and revisions
@@ -241,11 +247,13 @@ backend/
   Dockerfile
   .dockerignore
 docker-compose.yml    # Backend, PostgreSQL, migrations, n8n, test PostgreSQL
-n8n/workflows/        # Portable intake and AI automation workflows
+n8n/workflows/        # Portable intake, classification and controlled agent workflows
 n8n/verify_intake.py  # Real webhook + database verification with synthetic data
 n8n/verify_automation.py # All decisions and review actions against local Docker
 n8n/test_workflow.cjs # Exported workflow JavaScript checks
 n8n/test_automation.cjs # Processing response/error and branch checks
+n8n/verify_agent.py   # Real agent webhook/review/audit verification using fake provider
+n8n/test_agent.cjs    # Agent workflow response, fallback and safety checks
 dashboard/           # Placeholder only
 database/
 sample-data/
