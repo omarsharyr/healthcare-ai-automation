@@ -15,6 +15,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.db.session import get_session
 from app.main import create_app
+from app.services.ai_provider import FakeAIProvider, get_ai_provider
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -87,6 +88,7 @@ def db_client(db_sessions: sessionmaker[Session]) -> Iterator[TestClient]:
             yield session
 
     application.dependency_overrides[get_session] = override_session
+    application.dependency_overrides[get_ai_provider] = lambda: FakeAIProvider()
     with TestClient(application) as test_client:
         yield test_client
 

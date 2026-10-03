@@ -14,6 +14,20 @@ class RequestPriority(str, Enum):
 
 class RequestStatus(str, Enum):
     RECEIVED = "received"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
+class WorkflowDecision(str, Enum):
+    AUTO_PROCESS = "AUTO_PROCESS"
+    HUMAN_REVIEW = "HUMAN_REVIEW"
+    REJECT = "REJECT"
+
+
+class ReviewStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class RequestCategory(str, Enum):

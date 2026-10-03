@@ -117,7 +117,7 @@ def test_migration_runner_is_repeatable(db_engine: Engine) -> None:
     upgrade_database(db_engine)
     upgrade_database(db_engine)
     with db_engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
 
 
 def test_migration_runner_respects_concurrent_lock(db_engine: Engine) -> None:

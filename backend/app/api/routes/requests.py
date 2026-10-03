@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_session
 from app.schemas.requests import RequestCreate, RequestCreated, RequestRead
 from app.services import requests as request_service
+from app.services.ai_provider import AIProvider, get_ai_provider
+from app.services.processing import process_request
+from app.schemas.processing import ProcessingResponse
 
 router = APIRouter(prefix="/api/v1/requests", tags=["requests"])
 
@@ -27,3 +30,9 @@ def get_request(request_uuid: UUID, session: SessionDependency) -> RequestRead:
     if request is None:
         raise HTTPException(status_code=404, detail="Request not found")
     return request
+
+
+@router.post("/{request_uuid}/process", response_model=ProcessingResponse)
+def process(request_uuid: UUID, session: SessionDependency,
+            provider: Annotated[AIProvider, Depends(get_ai_provider)]) -> ProcessingResponse:
+    return process_request(session, request_uuid, provider)

@@ -2,9 +2,9 @@
 
 A portfolio project for a Workflow Automation Specialist role, built incrementally to demonstrate API integrations, workflow automation, validated AI outputs, human review, auditability, monitoring, and security-conscious engineering.
 
-**Use only synthetic/fake healthcare data. This application is not HIPAA compliant.** HIPAA-conscious practices are educational goals, not a compliance claim. There is no authentication or PHI masking yet; use locally with fake data only.
+**Use only synthetic/fake healthcare data. This application is not HIPAA compliant.** HIPAA-conscious practices are educational goals, not a compliance claim. Pattern-based redaction is incomplete, and there is no application authentication; use locally with fake data only.
 
-## Phase 4 scope
+## Phase 5 scope
 
 - FastAPI, Pydantic validation, and SQLAlchemy 2.x with PostgreSQL via psycopg 3.
 - Persisted requests and `REQUEST_RECEIVED` audit events in one transaction.
@@ -12,10 +12,13 @@ A portfolio project for a Workflow Automation Specialist role, built incremental
 - Non-root backend container, PostgreSQL, and a one-shot migration service in Docker Compose.
 - Bounded database startup retries, liveness/readiness endpoints, and structured JSON logs.
 - A separate disposable PostgreSQL test service.
-- n8n orchestration: webhook -> envelope normalization -> FastAPI -> PostgreSQL request/audit -> response.
-- No LLM functionality, application authentication, PHI masking, agents, or queue.
+- n8n orchestration: webhook -> create -> process -> branch on backend decision -> response.
+- Deterministic sensitive-data redaction before classification; OpenAI provider abstraction and an offline fake provider.
+- Strict Pydantic AI validation and deterministic AUTO_PROCESS / HUMAN_REVIEW / REJECT rules.
+- Persisted decisions, transactional audit events, and human approval/rejection with duplicate-decision protection.
+- No application authentication, agents, Redis, dashboard, or background queue.
 
-The **Healthcare Request Intake** workflow and complete import/test instructions are in [docs/n8n-intake.md](docs/n8n-intake.md). Its export is [n8n/workflows/01_request_intake.json](n8n/workflows/01_request_intake.json).
+The **Healthcare Request Automation** workflow, architecture, decision rules, API examples, and end-to-end verification are documented in [docs/ai-processing.md](docs/ai-processing.md). Import [n8n/workflows/01_healthcare_request_automation.json](n8n/workflows/01_healthcare_request_automation.json). The [Phase 4 intake guide](docs/n8n-intake.md) and original create-only workflow remain available.
 
 **API change from Phase 1:** POST now returns HTTP **201 Created**, `request_uuid` (replacing the old `request_id` acknowledgement field), status `received`, and `persisted: true` after commit. It does not queue background work.
 
@@ -28,7 +31,7 @@ Requires Docker Desktop/Engine running with Linux containers and a recent Docker
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, keep the password that initialized your existing volume, set `APP_VERSION=0.4.0`, and follow the [n8n setup instructions](docs/n8n-intake.md#start-n8n). Do not commit `.env`.
+Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, preserve existing credentials, set `APP_VERSION=0.5.0`, and add `AI_PROVIDER=fake` for the offline demo. Follow the [Phase 5 setup instructions](docs/ai-processing.md#configure-and-start). Do not commit `.env`.
 
 ```powershell
 docker compose config --quiet
@@ -39,7 +42,7 @@ docker compose ps -a
 
 Open http://127.0.0.1:8000/docs. `backend` and `postgres` should be healthy; `migrate` should show **Exited (0)**, which means it completed successfully. The backend runs as UID 10001, with no additional Linux capabilities. Build inputs exclude `.env`, virtual environments, test caches, and local data. No credentials are passed as build arguments or embedded in the image.
 
-n8n should also be healthy at http://localhost:5678. Complete its native editor setup, then import and publish the workflow as described in the [intake guide](docs/n8n-intake.md). The n8n editor has its own built-in login; the healthcare API/webhook still have no application authentication.
+n8n should also be healthy at http://localhost:5678. Complete its native editor setup, then import and publish the workflow as described in the [automation guide](docs/ai-processing.md#n8n-import-and-verification). The n8n editor has its own built-in login; the healthcare API/webhook and review endpoints still have no application authentication.
 
 The Compose bridge network provides service DNS: backend/migrations connect to `postgres:5432`. Host port settings only affect access from your computer. Backend and PostgreSQL ports bind to `127.0.0.1` on the host. The database retains its named volume. Runtime credentials come from explicitly passed environment variables, not a copied `.env`.
 
@@ -82,12 +85,16 @@ On macOS/Linux use `python3`, `.venv/bin/python`, and `cp .env.example .env`; us
 
 ## Configuration and storage
 
-App settings live in `backend/app/core/config.py`; database settings live separately in `backend/app/db/config.py`. Both read the root `.env` regardless of working directory, with process environment variables taking precedence. Restart the API after changing cached settings.
+App settings live in `backend/app/core/config.py`; database settings live separately in `backend/app/db/config.py`; AI settings live in `backend/app/core/ai_config.py`. They read the root `.env` regardless of working directory, with process environment variables taking precedence. Recreate the backend after changing container environment settings.
 
 | Variable | Purpose |
 | --- | --- |
 | `APP_NAME`, `APP_ENVIRONMENT`, `APP_VERSION` | Application metadata |
 | `APP_LOG_LEVEL` | JSON logging level: DEBUG, INFO, WARNING, or ERROR |
+| `AI_PROVIDER` | `fake` (offline default) or `openai` |
+| `OPENAI_API_KEY` | Backend-only secret, needed for the real provider; blank in template |
+| `OPENAI_MODEL` | Structured-output model, defaults to `gpt-4.1-mini` |
+| `AI_TIMEOUT_SECONDS` | Provider HTTP timeout, defaults to 20, allowed 1–30 |
 | `API_PORT` | Compose host API port, defaults to 8000 |
 | `N8N_PORT` | Local n8n editor/webhook port, defaults to 5678 |
 | `N8N_ENCRYPTION_KEY` | Required stable secret for n8n credential encryption |
@@ -134,13 +141,15 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/v1/requests/$($created.request_uuid
 Expected behavior:
 
 - Health: HTTP 200 with `{"status":"ok"}`. This checks process liveness, not database readiness.
-- Ready: HTTP 200 with `{"status":"ready","database":"ok"}` after a live query and checks that both migrated tables can be read. It returns HTTP 503 with `{"status":"not_ready","database":"unavailable"}` on DB/schema failure. It does not read patient fields or mutate data.
+- Ready: HTTP 200 with `{"status":"ready","database":"ok"}` after a live query and checks that all three migrated tables can be read. It returns HTTP 503 with `{"status":"not_ready","database":"unavailable"}` on DB/schema failure. It does not read patient fields or mutate data. It does not call the LLM provider.
 - POST: HTTP 201, a `Location` header, UUID, status `received`, `category: null`, source, priority, timezone-aware timestamps, and `persisted: true`. It omits patient reference and request text.
 - GET: HTTP 200 with stored request details, including the synthetic reference/text. Internal numeric IDs are omitted.
 - Unknown UUID: HTTP 404. Malformed UUID, short text, or invalid priority: HTTP 422.
 - Database operation failure: HTTP 503 with a generic message; no database exception or parameters are exposed.
 
 Validation requires a `PAT-` reference followed by ASCII digits (max 64 characters); text of 10-10,000 characters after trimming; source `api` or `n8n`; priority `low`, `normal`, or `high`. Direct API source/priority default to `api`/`normal`; the n8n workflow stamps source `n8n`. Unknown fields are rejected. A `PAT-` reference does not guarantee fake data. Each POST creates a new request; deduplication is not implemented.
+
+After creation, `POST /api/v1/requests/{request_uuid}/process` runs redaction, classification and decision rules synchronously. `GET /api/v1/reviews/pending` lists pending reviews; `POST /api/v1/reviews/{id}/approve` or `/reject` resolves one. See the [copyable manual test](docs/ai-processing.md#manual-api-verification). A processed request may still await human review; final disposition is in `system_decision`.
 
 Verify the database and audit without selecting healthcare text. With the default example user/database:
 
@@ -172,11 +181,12 @@ Application logs exclude bodies, `patient_reference`, `request_text`, raw paths/
 
 ## Models, transactions, and migrations
 
-- `requests`: bigint identity `id`, unique UUID `request_uuid`, reference/text, source, priority, status, nullable category, timezone-aware `created_at` and `updated_at`.
+- `requests`: bigint identity `id`, unique UUID `request_uuid`, reference/text, source, priority, status, nullable category/confidence/AI recommendation/system decision/decision reason, timezone-aware `created_at` and `updated_at`.
 - `audit_events`: bigint identity `id`, indexed `request_id` foreign key, event type, actor, JSONB `metadata`, and timezone-aware `created_at`. Its Python attribute is `event_metadata` because SQLAlchemy reserves `metadata`.
+- `human_reviews`: unique request foreign key, PENDING/APPROVED/REJECTED status, AI recommendation, reviewer decision/notes, creation/review timestamps. Review resolution and completion audits commit together.
 - String enums have named database CHECK constraints. The UUID has a unique constraint/index; audits reference requests with deletion restricted. Audit data is not immutable/tamper-proof in this phase.
 - Routes handle HTTP only. The creation service flushes the request, inserts the audit, and commits both using `Session.begin()`. Errors roll back both; success is returned only after commit. Sessions are opened/closed per HTTP request.
-- PostgreSQL supplies creation timestamps. SQLAlchemy updates `updated_at` on ORM/Core updates; raw SQL writers must set it explicitly. There is no update endpoint in this phase.
+- PostgreSQL supplies creation timestamps. SQLAlchemy updates `updated_at` on ORM/Core updates; raw SQL writers must set it explicitly. Processing/review actions update the request through services.
 - Alembic is the only schema creation mechanism. The API never calls `create_all()` or applies migrations on startup. Review generated migrations before applying them.
 - Application SQL echo is disabled, SQL parameters are hidden, validation errors omit submitted values, and request bodies are not logged. Compose suppresses SQL error statements/row details in PostgreSQL logs. These measures are not PHI masking.
 
@@ -203,7 +213,7 @@ docker compose --profile test stop postgres-test
 
 Tests require the host Python dependencies from the optional setup section. They use `TEST_DATABASE_URL` if set; otherwise they build a URL from `TEST_POSTGRES_HOST`, `TEST_POSTGRES_PORT`, and the POSTGRES credentials, always selecting `healthcare_test`. They never fall back to the application database URL/name. Each database test creates a unique schema, applies real Alembic migrations, then drops only that schema. Test credentials need schema-creation permissions. Missing/unavailable configuration fails integration tests instead of silently skipping them.
 
-Coverage includes all Phase 2 behavior plus readiness success/failure/missing tables, bounded startup retries, safe structured logs, first-time/repeated migrations, and concurrent migration lock handling. For tests without PostgreSQL:
+Coverage includes persistence, readiness, startup retries, safe logs, migrations, redaction, validated classification, provider failures, decision thresholds, reviews, audits, and concurrent processing/review protection. Tests use fake providers and mocked HTTP; they require no paid LLM calls. See [workflow tests and live verification](docs/ai-processing.md#automated-tests). For tests without PostgreSQL:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -c backend/pytest.ini backend/tests -m "not integration"
@@ -216,9 +226,9 @@ backend/
   app/
     api/routes/       # Thin HTTP handlers
     schemas/          # Pydantic API contracts
-    services/         # Transactional request creation and lookup
-    core/             # App configuration and shared enums
-    models/           # SQLAlchemy Request and AuditEvent
+    services/         # Requests, redaction, AI abstraction, decisions and reviews
+    core/             # App/AI configuration and shared enums
+    models/           # SQLAlchemy Request, AuditEvent and HumanReview
     db/               # Separate DB settings, engine, sessions, base
     agents/           # Placeholder only
     main.py           # App factory and safe error responses
@@ -231,9 +241,11 @@ backend/
   Dockerfile
   .dockerignore
 docker-compose.yml    # Backend, PostgreSQL, migrations, n8n, test PostgreSQL
-n8n/workflows/        # Portable Healthcare Request Intake workflow
+n8n/workflows/        # Portable intake and AI automation workflows
 n8n/verify_intake.py  # Real webhook + database verification with synthetic data
+n8n/verify_automation.py # All decisions and review actions against local Docker
 n8n/test_workflow.cjs # Exported workflow JavaScript checks
+n8n/test_automation.cjs # Processing response/error and branch checks
 dashboard/           # Placeholder only
 database/
 sample-data/

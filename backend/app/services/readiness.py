@@ -4,7 +4,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models import AuditEvent, Request
+from app.models import AuditEvent, HumanReview, Request
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ def database_is_ready(session: Session) -> bool:
         # Check migrated tables/permissions without loading patient data.
         session.execute(select(Request.id).limit(1))
         session.execute(select(AuditEvent.id).limit(1))
+        session.execute(select(HumanReview.id).limit(1))
         return True
     except SQLAlchemyError:
         logger.warning("database_not_ready")

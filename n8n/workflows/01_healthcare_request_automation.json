@@ -1,0 +1,618 @@
+{
+  "id": "healthcareRequestAutomation01",
+  "name": "Healthcare Request Automation",
+  "nodes": [
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c001",
+      "name": "Intake webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "c16f5287-9165-47e0-a1e0-5b3771050001",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "healthcare-request-automation",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c002",
+      "name": "Validate and normalize envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Only validate the transport envelope. FastAPI owns all field/business validation.\nconst body = $input.first().json.body;\nif (body === null || typeof body !== 'object' || Array.isArray(body)) {\n  return [{ json: { forward: false, response_status: 400,\n    response_body: { detail: 'Expected a JSON object request body' } } }];\n}\n// Keep unknown fields so FastAPI can reject them; identify this orchestration channel.\nreturn [{ json: { forward: true, payload: { ...body, source: 'n8n' } } }];"
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c003",
+      "name": "Valid JSON object?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-forward",
+              "leftValue": "={{ $json.forward }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c004",
+      "name": "Create request in FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        -120
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/requests",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 10000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c005",
+      "name": "Check backend response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// Do not expose HTTP node errors, upstream headers, or submitted input to the caller.\nconst upstream = $input.first().json;\nconst status = Number(upstream.statusCode);\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (status === 201 && body && body.persisted === true &&\n    typeof body.request_uuid === 'string' && uuid.test(body.request_uuid)) {\n  const response = {};\n  for (const key of ['request_uuid', 'source', 'priority', 'status', 'category',\n    'created_at', 'updated_at', 'persisted', 'message']) {\n    if (Object.prototype.hasOwnProperty.call(body, key)) response[key] = body[key];\n  }\n  return [{ json: { success: true, response_status: 201, response_body: response } }];\n}\nif (status === 422) {\n  // Allowlist field names and error codes; never reflect submitted values/unknown keys.\n  const fields = ['patient_reference', 'request_text', 'source', 'priority'];\n  const errors = Array.isArray(body?.detail) ? body.detail.map(error => ({\n    field: fields.includes(error.loc?.[1]) ? error.loc[1] : 'body',\n    type: typeof error.type === 'string' && /^[a-z_]+$/.test(error.type)\n      ? error.type : 'validation_error'\n  })) : [];\n  return [{ json: { success: false, response_status: 422,\n    response_body: { detail: 'Request validation failed', errors } } }];\n}\nconst errorText = typeof upstream.error === 'string' ? upstream.error\n  : String(upstream.error?.message ?? upstream.error?.code ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(errorText);\nconst responseStatus = timeout ? 504 : status === 503 ? 503 : 502;\nreturn [{ json: { success: false, response_status: responseStatus,\n  response_body: { detail: timeout ? 'Backend request timed out; outcome is unknown. Do not retry automatically.'\n    : status === 503 ? 'Backend temporarily unavailable'\n    : 'Backend request failed; outcome may be unknown. Do not retry automatically.' } } }];"
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c006",
+      "name": "Request persisted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c007",
+      "name": "Success response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2680,
+        -240
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c008",
+      "name": "Error response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2160,
+        180
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response_body }}",
+        "options": {
+          "responseCode": "={{ $json.response_status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3e99a5fd-d726-4b44-94cf-104a6ab9c009",
+      "name": "Synthetic data only",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -360
+      ],
+      "parameters": {
+        "content": "## Healthcare Request Automation — synthetic data only\nFastAPI owns redaction, classification validation, deterministic decisions, review creation and audits. Branches only display the persisted backend decision.\n\nAUTO_PROCESS/REJECT are administrative workflow outcomes, not medical treatment or claim-payment decisions. No LLM credentials are present in n8n.\n\nA processing error includes the created UUID: inspect/process that request; never automatically repeat intake. HTTP retries are disabled.",
+        "height": 270,
+        "width": 800
+      }
+    },
+    {
+      "id": "phase5-process-http",
+      "name": "Process with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        -120
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://backend:8000/api/v1/requests/' + $json.response_body.request_uuid + '/process' }}",
+        "sendBody": false,
+        "options": {
+          "timeout": 45000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "phase5-check-processing-response",
+      "name": "Check processing response",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const upstream = $input.first().json;\nconst created = $('Check backend response').first().json.response_body;\nconst body = upstream.body;\nconst status = Number(upstream.statusCode);\nconst decisions = ['AUTO_PROCESS', 'HUMAN_REVIEW', 'REJECT'];\nif (status === 200 && body && body.request_uuid === created.request_uuid &&\n    body.status === 'processed' && decisions.includes(body.system_decision)) {\n  const response = {persisted: true};\n  for (const key of ['request_uuid', 'category', 'confidence', 'ai_recommendation',\n    'system_decision', 'decision_reason', 'status', 'review_id']) {\n    if (Object.prototype.hasOwnProperty.call(body, key)) response[key] = body[key];\n  }\n  return [{json: {success: true, response_status: 200, response_body: response}}];\n}\nconst message = typeof upstream.error === 'string' ? upstream.error\n  : String(upstream.error?.message ?? upstream.error?.code ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(message);\nreturn [{json: {success: false, response_status: timeout ? 504 : status === 409 ? 409 : status === 503 ? 503 : 502,\n  response_body: {request_uuid: created.request_uuid, persisted: true,\n    detail: 'Request was created but processing was not confirmed. Check this UUID; do not submit intake again.'}}}];"
+      },
+      "position": [
+        1680,
+        -120
+      ],
+      "typeVersion": 2
+    },
+    {
+      "id": "phase5-processed-check",
+      "name": "Processing succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "phase5-if-decision",
+      "name": "IF Decision",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "AUTO_PROCESS",
+                    "leftValue": "={{ $json.response_body.system_decision }}",
+                    "rightValue": "AUTO_PROCESS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AUTO_PROCESS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "HUMAN_REVIEW",
+                    "leftValue": "={{ $json.response_body.system_decision }}",
+                    "rightValue": "HUMAN_REVIEW",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "HUMAN_REVIEW"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "REJECT",
+                    "leftValue": "={{ $json.response_body.system_decision }}",
+                    "rightValue": "REJECT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REJECT"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "position": [
+        2160,
+        -240
+      ],
+      "typeVersion": 3.2
+    },
+    {
+      "id": "phase5-complete",
+      "name": "Complete",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [
+        2420,
+        -400
+      ],
+      "typeVersion": 1
+    },
+    {
+      "id": "phase5-review-queue",
+      "name": "Review Queue",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [
+        2420,
+        -240
+      ],
+      "typeVersion": 1
+    },
+    {
+      "id": "phase5-reject",
+      "name": "Reject",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {},
+      "position": [
+        2420,
+        -80
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Intake webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and normalize envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and normalize envelope": {
+      "main": [
+        [
+          {
+            "node": "Valid JSON object?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid JSON object?": {
+      "main": [
+        [
+          {
+            "node": "Create request in FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create request in FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Check backend response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check backend response": {
+      "main": [
+        [
+          {
+            "node": "Request persisted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request persisted?": {
+      "main": [
+        [
+          {
+            "node": "Process with AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process with AI": {
+      "main": [
+        [
+          {
+            "node": "Check processing response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check processing response": {
+      "main": [
+        [
+          {
+            "node": "Processing succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processing succeeded?": {
+      "main": [
+        [
+          {
+            "node": "IF Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Decision": {
+      "main": [
+        [
+          {
+            "node": "Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete": {
+      "main": [
+        [
+          {
+            "node": "Success response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Queue": {
+      "main": [
+        [
+          {
+            "node": "Success response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject": {
+      "main": [
+        [
+          {
+            "node": "Success response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 60,
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "timezone": "UTC"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

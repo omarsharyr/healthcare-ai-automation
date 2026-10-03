@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-from app.core.enums import RequestCategory, RequestPriority, RequestSource, RequestStatus
+from app.core.enums import RequestCategory, RequestPriority, RequestSource, RequestStatus, WorkflowDecision
 
 
 class RequestCreate(BaseModel):
@@ -37,3 +37,7 @@ class RequestCreated(RequestSummary):
 class RequestRead(RequestSummary):
     patient_reference: str
     request_text: str
+    confidence: float | None = None
+    ai_recommendation: WorkflowDecision | None = None
+    system_decision: WorkflowDecision | None = None
+    decision_reason: str | None = None
