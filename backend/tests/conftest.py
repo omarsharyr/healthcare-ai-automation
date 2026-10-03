@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import httpx
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -19,6 +20,19 @@ from app.services.ai_provider import FakeAIProvider, get_ai_provider
 from app.agents.provider import FakeAgentPlanner, get_agent_planner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def block_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests must inject MockTransport; a forgotten provider override cannot spend API credits."""
+    def blocked(*args: object, **kwargs: object) -> None:
+        raise AssertionError('Real HTTP transport is disabled during automated tests')
+
+    async def blocked_async(*args: object, **kwargs: object) -> None:
+        raise AssertionError('Real HTTP transport is disabled during automated tests')
+
+    monkeypatch.setattr(httpx.HTTPTransport, 'handle_request', blocked)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', blocked_async)
 
 
 class TestDatabaseSettings(BaseSettings):
@@ -91,13 +105,13 @@ def db_client(db_sessions: sessionmaker[Session]) -> Iterator[TestClient]:
     application.dependency_overrides[get_session] = override_session
     application.dependency_overrides[get_ai_provider] = lambda: FakeAIProvider()
     application.dependency_overrides[get_agent_planner] = lambda: FakeAgentPlanner()
-    with TestClient(application) as test_client:
+    with TestClient(application, base_url='http://localhost') as test_client:
         yield test_client
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    with TestClient(create_app()) as test_client:
+    with TestClient(create_app(), base_url='http://localhost') as test_client:
         yield test_client
 
 

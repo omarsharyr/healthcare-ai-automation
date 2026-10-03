@@ -88,6 +88,10 @@ class FakeAIProvider(AIProvider):
             category, action, confidence = "BILLING_QUESTION", "HUMAN_REVIEW", 0.93
         elif "claim" in text and "status" in text:
             category, action, confidence = "CLAIM_STATUS", "AUTO_PROCESS", 0.95
+            if "uncertain" in text:
+                # Reproducible synthetic demo: recommendation remains AUTO_PROCESS,
+                # but the deterministic confidence rule must override it.
+                confidence = 0.60
         return json.dumps({"category": category, "confidence": confidence,
                            "recommended_action": action, "reason": "Synthetic offline classification."})
 

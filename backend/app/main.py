@@ -5,12 +5,15 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.routes import agent, analytics, health, requests, reviews
 from app.core.config import get_settings
 from app.services.errors import WorkflowError
 from app.core.correlation import correlation_id, select_correlation_id
+from app.core.http_security import LocalWriteBoundary
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,12 @@ def create_app() -> FastAPI:
     application.include_router(reviews.router)
     application.include_router(agent.router)
     application.include_router(analytics.router)
+    application.add_middleware(LocalWriteBoundary)
+    application.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1', 'backend'])
+
+    @application.get('/', include_in_schema=False)
+    def index() -> RedirectResponse:
+        return RedirectResponse('/docs')
 
     @application.exception_handler(WorkflowError)
     async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONResponse:
@@ -41,6 +50,8 @@ def create_app() -> FastAPI:
                 response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
             response.headers["X-Correlation-ID"] = str(trace)
             response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "no-referrer"
             route = request.scope.get("route")
             logger.info("http_request_completed", extra={
                 "method": request.method, "route": getattr(route, "path", "unmatched"),

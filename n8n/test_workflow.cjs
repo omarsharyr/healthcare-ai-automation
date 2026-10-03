@@ -11,11 +11,11 @@ const run = (name, json) => {
 
 test('normalization preserves values and unknown fields for FastAPI validation', () => {
   const input = {patient_reference: 'PAT-10042', request_text: 'short', priority: 'INVALID', unexpected: true};
-  const normalized = run('Validate and normalize envelope', {body: input});
+  const normalized = run('Validate and normalize envelope', {body: input, headers: {'content-type':'application/json'}});
   assert.deepEqual(normalized.payload, {...input, source: 'n8n'});
   assert.equal(normalized.forward, true);
   for (const body of [null, [], 'synthetic', 42]) {
-    assert.equal(run('Validate and normalize envelope', {body}).response_status, 400);
+    assert.equal(run('Validate and normalize envelope', {body, headers: {'content-type':'application/json'}}).response_status, 400);
   }
 });
 

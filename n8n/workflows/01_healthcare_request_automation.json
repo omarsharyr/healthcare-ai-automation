@@ -29,7 +29,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Only validate the transport envelope. FastAPI owns all field/business validation.\nconst body = $input.first().json.body;\nif (body === null || typeof body !== 'object' || Array.isArray(body)) {\n  return [{ json: { forward: false, response_status: 400,\n    response_body: { detail: 'Expected a JSON object request body' } } }];\n}\n// Keep unknown fields so FastAPI can reject them; identify this orchestration channel.\nreturn [{ json: { forward: true, payload: { ...body, source: 'n8n' } } }];"
+        "jsCode": "// Local browser boundary; not webhook authentication.\nconst headers = $input.first().json.headers || {};\nconst origin = headers.origin;\nconst localOrigin = typeof origin === 'string' && /^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d{1,5})?$/.test(origin);\nif (origin && !localOrigin) {\n  return [{json:{forward:false,response_status:403,response_body:{detail:'Cross-origin webhook requests are not allowed'}}}];\n}\nif (String(headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {\n  return [{json:{forward:false,response_status:415,response_body:{detail:'Use application/json'}}}];\n}\n// Only validate the transport envelope. FastAPI owns all field/business validation.\nconst body = $input.first().json.body;\nif (body === null || typeof body !== 'object' || Array.isArray(body)) {\n  return [{ json: { forward: false, response_status: 400,\n    response_body: { detail: 'Expected a JSON object request body' } } }];\n}\n// Keep unknown fields so FastAPI can reject them; identify this orchestration channel.\nreturn [{ json: { forward: true, payload: { ...body, source: 'n8n' } } }];"
       }
     },
     {

@@ -1,0 +1,6 @@
+{
+  "patient_reference": "PAT-90001",
+  "request_text": "Synthetic patient PAT-90001 DOB 1995-10-02 asks about claim CLM-90001. The claim status is uncertain. Contact demo@example.test or 202-555-0199.",
+  "source": "n8n",
+  "priority": "normal"
+}

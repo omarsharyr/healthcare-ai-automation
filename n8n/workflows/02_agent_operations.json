@@ -29,7 +29,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body;\nconst valid = body !== null && typeof body === 'object' && !Array.isArray(body);\nreturn [{json: valid ? {valid:true, payload:body} : {valid:false, response_status:400, response_body:{detail:'Expected a JSON object'}}}];"
+        "jsCode": "// Local browser boundary; not webhook authentication.\nconst headers = $input.first().json.headers || {};\nconst origin = headers.origin;\nconst localOrigin = typeof origin === 'string' && /^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d{1,5})?$/.test(origin);\nif (origin && !localOrigin) {\n  return [{json:{valid:false,response_status:403,response_body:{detail:'Cross-origin webhook requests are not allowed'}}}];\n}\nif (String(headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {\n  return [{json:{valid:false,response_status:415,response_body:{detail:'Use application/json'}}}];\n}\nconst body = $input.first().json.body;\nconst valid = body !== null && typeof body === 'object' && !Array.isArray(body);\nreturn [{json: valid ? {valid:true, payload:body} : {valid:false, response_status:400, response_body:{detail:'Expected a JSON object'}}}];"
       }
     },
     {
