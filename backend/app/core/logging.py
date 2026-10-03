@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from logging.config import dictConfig
 from typing import Any
+from app.core.correlation import current_correlation_id
 
 
 class JsonFormatter(logging.Formatter):
@@ -17,6 +18,9 @@ class JsonFormatter(logging.Formatter):
         for field in ("method", "route", "status_code", "duration_ms", "attempt", "max_attempts"):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
+        trace = getattr(record, "correlation_id", None) or current_correlation_id()
+        if trace is not None:
+            payload["correlation_id"] = str(trace)
         # Deliberately omit exc_info, stack_info, and arbitrary extra fields.
         return json.dumps(payload, ensure_ascii=True)
 

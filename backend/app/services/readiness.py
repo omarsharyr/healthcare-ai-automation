@@ -14,7 +14,7 @@ def database_is_ready(session: Session) -> bool:
         session.execute(text("SELECT 1"))
         # Check migrated tables/permissions without loading patient data.
         session.execute(select(Request.id).limit(1))
-        session.execute(select(AuditEvent.id).limit(1))
+        session.execute(select(AuditEvent.id, AuditEvent.correlation_id).limit(1))
         session.execute(select(HumanReview.id).limit(1))
         return True
     except SQLAlchemyError:

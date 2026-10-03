@@ -7,9 +7,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.routes import agent, health, requests, reviews
+from app.api.routes import agent, analytics, health, requests, reviews
 from app.core.config import get_settings
 from app.services.errors import WorkflowError
+from app.core.correlation import correlation_id, select_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     application.include_router(requests.router)
     application.include_router(reviews.router)
     application.include_router(agent.router)
+    application.include_router(analytics.router)
 
     @application.exception_handler(WorkflowError)
     async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONResponse:
@@ -29,19 +31,25 @@ def create_app() -> FastAPI:
     @application.middleware("http")
     async def log_request(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         started = perf_counter()
+        trace = select_correlation_id(request.headers.get("X-Correlation-ID"))
+        token = correlation_id.set(trace)
         try:
-            response = await call_next(request)
-        except Exception:
-            logger.error("request_failed")
-            response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
-        route = request.scope.get("route")
-        logger.info("http_request_completed", extra={
-            "method": request.method,
-            "route": getattr(route, "path", "unmatched"),
-            "status_code": response.status_code,
-            "duration_ms": round((perf_counter() - started) * 1000, 2),
-        })
-        return response
+            try:
+                response = await call_next(request)
+            except Exception:
+                logger.error("request_failed")
+                response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+            response.headers["X-Correlation-ID"] = str(trace)
+            response.headers["Cache-Control"] = "no-store"
+            route = request.scope.get("route")
+            logger.info("http_request_completed", extra={
+                "method": request.method, "route": getattr(route, "path", "unmatched"),
+                "status_code": response.status_code, "correlation_id": str(trace),
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+            })
+            return response
+        finally:
+            correlation_id.reset(token)
 
     @application.exception_handler(SQLAlchemyError)
     async def database_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
@@ -54,10 +62,13 @@ def create_app() -> FastAPI:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         # Do not reflect submitted healthcare text in validation errors.
-        errors = [
-            {"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
-            for error in exc.errors()
-        ]
+        # Unknown JSON keys can themselves contain patient text. Never reflect them.
+        allowed_fields = {"patient_reference", "request_text", "source", "priority", "request_uuid",
+                          "review_id", "reviewer_notes", "message", "limit", "offset", "date_from",
+                          "date_to", "category", "status"}
+        errors = [{"loc": [part if isinstance(part, int) or part in allowed_fields or part in
+                            {"body", "path", "query", "header"} else "field" for part in error["loc"]],
+                   "msg": "Invalid input", "type": error["type"]} for error in exc.errors()]
         return JSONResponse(status_code=422, content={"detail": errors})
 
     return application

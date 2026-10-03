@@ -97,6 +97,15 @@
               "responseFormat": "json"
             }
           }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $('Intake webhook').first().json.headers?.['x-correlation-id'] || '' }}"
+            }
+          ]
         }
       }
     },
@@ -110,7 +119,7 @@
         -120
       ],
       "parameters": {
-        "jsCode": "// Do not expose HTTP node errors, upstream headers, or submitted input to the caller.\nconst upstream = $input.first().json;\nconst status = Number(upstream.statusCode);\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (status === 201 && body && body.persisted === true &&\n    typeof body.request_uuid === 'string' && uuid.test(body.request_uuid)) {\n  const response = {};\n  for (const key of ['request_uuid', 'source', 'priority', 'status', 'category',\n    'created_at', 'updated_at', 'persisted', 'message']) {\n    if (Object.prototype.hasOwnProperty.call(body, key)) response[key] = body[key];\n  }\n  return [{ json: { success: true, response_status: 201, response_body: response } }];\n}\nif (status === 422) {\n  // Allowlist field names and error codes; never reflect submitted values/unknown keys.\n  const fields = ['patient_reference', 'request_text', 'source', 'priority'];\n  const errors = Array.isArray(body?.detail) ? body.detail.map(error => ({\n    field: fields.includes(error.loc?.[1]) ? error.loc[1] : 'body',\n    type: typeof error.type === 'string' && /^[a-z_]+$/.test(error.type)\n      ? error.type : 'validation_error'\n  })) : [];\n  return [{ json: { success: false, response_status: 422,\n    response_body: { detail: 'Request validation failed', errors } } }];\n}\nconst errorText = typeof upstream.error === 'string' ? upstream.error\n  : String(upstream.error?.message ?? upstream.error?.code ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(errorText);\nconst responseStatus = timeout ? 504 : status === 503 ? 503 : 502;\nreturn [{ json: { success: false, response_status: responseStatus,\n  response_body: { detail: timeout ? 'Backend request timed out; outcome is unknown. Do not retry automatically.'\n    : status === 503 ? 'Backend temporarily unavailable'\n    : 'Backend request failed; outcome may be unknown. Do not retry automatically.' } } }];"
+        "jsCode": "// Do not expose HTTP node errors, upstream headers, or submitted input to the caller.\nconst upstream = $input.first().json;\nconst correlation = upstream.headers?.['x-correlation-id'] || null;\nconst status = Number(upstream.statusCode);\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (status === 201 && body && body.persisted === true &&\n    typeof body.request_uuid === 'string' && uuid.test(body.request_uuid)) {\n  const response = {};\n  for (const key of ['request_uuid', 'source', 'priority', 'status', 'category',\n    'created_at', 'updated_at', 'persisted', 'message']) {\n    if (Object.prototype.hasOwnProperty.call(body, key)) response[key] = body[key];\n  }\n  return [{ json: { correlation_id: correlation, success: true, response_status: 201, response_body: response } }];\n}\nif (status === 422) {\n  // Allowlist field names and error codes; never reflect submitted values/unknown keys.\n  const fields = ['patient_reference', 'request_text', 'source', 'priority'];\n  const errors = Array.isArray(body?.detail) ? body.detail.map(error => ({\n    field: fields.includes(error.loc?.[1]) ? error.loc[1] : 'body',\n    type: typeof error.type === 'string' && /^[a-z_]+$/.test(error.type)\n      ? error.type : 'validation_error'\n  })) : [];\n  return [{ json: { correlation_id: correlation, success: false, response_status: 422,\n    response_body: { detail: 'Request validation failed', errors } } }];\n}\nconst errorText = typeof upstream.error === 'string' ? upstream.error\n  : String(upstream.error?.message ?? upstream.error?.code ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(errorText);\nconst responseStatus = timeout ? 504 : status === 503 ? 503 : 502;\nreturn [{ json: { correlation_id: correlation, success: false, response_status: responseStatus,\n  response_body: { detail: timeout ? 'Backend request timed out; outcome is unknown. Do not retry automatically.'\n    : status === 503 ? 'Backend temporarily unavailable'\n    : 'Backend request failed; outcome may be unknown. Do not retry automatically.' } } }];"
       }
     },
     {
@@ -166,6 +175,10 @@
               {
                 "name": "Cache-Control",
                 "value": "no-store"
+              },
+              {
+                "name": "X-Correlation-ID",
+                "value": "={{ $json.correlation_id || '' }}"
               }
             ]
           }
@@ -191,6 +204,10 @@
               {
                 "name": "Cache-Control",
                 "value": "no-store"
+              },
+              {
+                "name": "X-Correlation-ID",
+                "value": "={{ $json.correlation_id || '' }}"
               }
             ]
           }

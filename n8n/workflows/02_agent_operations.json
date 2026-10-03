@@ -95,6 +95,15 @@
               "responseFormat": "json"
             }
           }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $('Agent webhook').first().json.headers?.['x-correlation-id'] || '' }}"
+            }
+          ]
         }
       },
       "retryOnFail": false,
@@ -110,7 +119,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const upstream = $input.first().json;\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (upstream.statusCode === 200 && body && uuid.test(body.run_uuid) &&\n    ['completed','fallback'].includes(body.status) && typeof body.escalated === 'boolean' &&\n    typeof body.human_action_required === 'boolean' && Array.isArray(body.tools_used) && Array.isArray(body.results)) {\n  const response = {};\n  for (const key of ['run_uuid','response','tools_used','results','escalated','human_action_required','status']) response[key] = body[key];\n  return [{json:{success:true, escalated:body.escalated, response_status:200, response_body:response}}];\n}\nconst error = typeof upstream.error === 'string' ? upstream.error : String(upstream.error?.message ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT/i.test(error);\nreturn [{json:{success:false,response_status:timeout ? 504 : upstream.statusCode === 422 ? 422 : upstream.statusCode === 503 ? 503 : 502,\n  response_body:{detail:'Agent operation was not confirmed. Inspect the API/review queue before retrying; do not retry automatically.'}}}];"
+        "jsCode": "const upstream = $input.first().json;\nconst correlation = upstream.headers?.['x-correlation-id'] || null;\nconst body = upstream.body;\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (upstream.statusCode === 200 && body && uuid.test(body.run_uuid) &&\n    ['completed','fallback'].includes(body.status) && typeof body.escalated === 'boolean' &&\n    typeof body.human_action_required === 'boolean' && Array.isArray(body.tools_used) && Array.isArray(body.results)) {\n  const response = {};\n  for (const key of ['run_uuid','response','tools_used','results','escalated','human_action_required','status']) response[key] = body[key];\n  return [{json:{correlation_id: correlation, success:true, escalated:body.escalated, response_status:200, response_body:response}}];\n}\nconst error = typeof upstream.error === 'string' ? upstream.error : String(upstream.error?.message ?? '');\nconst timeout = /timeout|timed.?out|ETIMEDOUT/i.test(error);\nreturn [{json:{correlation_id: correlation, success:false,response_status:timeout ? 504 : upstream.statusCode === 422 ? 422 : upstream.statusCode === 503 ? 503 : 502,\n  response_body:{detail:'Agent operation was not confirmed. Inspect the API/review queue before retrying; do not retry automatically.'}}}];"
       }
     },
     {
@@ -233,6 +242,10 @@
               {
                 "name": "Cache-Control",
                 "value": "no-store"
+              },
+              {
+                "name": "X-Correlation-ID",
+                "value": "={{ $json.correlation_id || '' }}"
               }
             ]
           }
@@ -258,6 +271,10 @@
               {
                 "name": "Cache-Control",
                 "value": "no-store"
+              },
+              {
+                "name": "X-Correlation-ID",
+                "value": "={{ $json.correlation_id || '' }}"
               }
             ]
           }

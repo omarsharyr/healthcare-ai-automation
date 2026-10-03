@@ -4,7 +4,7 @@ A portfolio project for a Workflow Automation Specialist role, built incremental
 
 **Use only synthetic/fake healthcare data. This application is not HIPAA compliant.** HIPAA-conscious practices are educational goals, not a compliance claim. Pattern-based redaction is incomplete, and there is no application authentication; use locally with fake data only.
 
-## Phase 6 scope
+## Phase 7 scope
 
 - FastAPI, Pydantic validation, and SQLAlchemy 2.x with PostgreSQL via psycopg 3.
 - Persisted requests and `REQUEST_RECEIVED` audit events in one transaction.
@@ -17,7 +17,11 @@ A portfolio project for a Workflow Automation Specialist role, built incremental
 - Strict Pydantic AI validation and deterministic AUTO_PROCESS / HUMAN_REVIEW / REJECT rules.
 - Persisted decisions, transactional audit events, and human approval/rejection with duplicate-decision protection.
 - Controlled operations agent with five approved tools, UUID scope checks, execution limits, structured results and audits.
-- No application authentication, Redis, dashboard, or background queue.
+- Aggregate analytics API and Streamlit operations dashboard with date/category/status filters.
+- Correlation IDs in API responses, logs, audits and n8n calls; bounded retries for dashboard reads.
+- No application authentication, Redis, or background queue.
+
+Start the full stack with `docker compose up -d --build --wait --wait-timeout 240`. Open **FastAPI** at http://localhost:8000/docs, **n8n** at http://localhost:5678 and **Streamlit** at http://localhost:8501. PostgreSQL is internal by default. See the [dashboard setup, metric definitions, reliability and verification guide](docs/operations-dashboard.md).
 
 The **Healthcare Operations Agent** is available at `POST /api/v1/agent/run`. See [the agent architecture, Swagger/n8n demo and changed files](docs/controlled-agent.md). Its export is [02_agent_operations.json](n8n/workflows/02_agent_operations.json). The model can request read tools or human escalation; it cannot execute code, arbitrary SQL/HTTP, or approve/reject reviews. Scope checks constrain tool access within a run; they are not user authentication.
 
@@ -34,7 +38,7 @@ Requires Docker Desktop/Engine running with Linux containers and a recent Docker
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, preserve existing credentials, set `APP_VERSION=0.6.0`, and add `AI_PROVIDER=fake` for the offline demo. Follow the [Phase 6 setup instructions](docs/controlled-agent.md#start-and-configure). Do not commit `.env`.
+Edit `.env` and set a local `POSTGRES_PASSWORD` and a generated persistent `N8N_ENCRYPTION_KEY`; the committed template deliberately leaves both blank. Compose refuses to start without them. When upgrading, preserve existing credentials, set `APP_VERSION=0.7.0`, and add `AI_PROVIDER=fake` for the offline demo. Follow the [Phase 7 setup instructions](docs/operations-dashboard.md#start-the-platform). Do not commit `.env`.
 
 ```powershell
 docker compose config --quiet
@@ -47,7 +51,7 @@ Open http://127.0.0.1:8000/docs. `backend` and `postgres` should be healthy; `mi
 
 n8n should also be healthy at http://localhost:5678. Complete its native editor setup, then import and publish the workflow as described in the [automation guide](docs/ai-processing.md#n8n-import-and-verification). The n8n editor has its own built-in login; the healthcare API/webhook and review endpoints still have no application authentication.
 
-The Compose bridge network provides service DNS: backend/migrations connect to `postgres:5432`. Host port settings only affect access from your computer. Backend and PostgreSQL ports bind to `127.0.0.1` on the host. The database retains its named volume. Runtime credentials come from explicitly passed environment variables, not a copied `.env`.
+The Compose bridge network provides service DNS: backend/migrations connect to `postgres:5432`. PostgreSQL has no host port by default. Backend, n8n and Streamlit ports bind to `127.0.0.1`. The dashboard uses a separate backend network and has no DB credentials. Runtime credentials come from explicitly passed environment variables, not a copied `.env`.
 
 Startup order follows [Compose dependency conditions](https://docs.docker.com/compose/how-tos/startup-order/):
 
@@ -73,7 +77,7 @@ Requires Python 3.11+, Docker Desktop/Engine running with Linux containers, and 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
-docker compose up -d --wait postgres
+docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d --wait postgres
 docker compose stop backend
 Push-Location backend
 ..\.venv\Scripts\python.exe -m app.db.migrate
@@ -102,6 +106,7 @@ App settings live in `backend/app/core/config.py`; database settings live separa
 | `AGENT_TIMEOUT_SECONDS` | Planning/tool execution deadline, defaults to 25, allowed 0.1–40 |
 | `AGENT_ALLOW_GLOBAL_COUNT` | Server policy for aggregate pending-review counts, defaults to true |
 | `API_PORT` | Compose host API port, defaults to 8000 |
+| `DASHBOARD_PORT` | Streamlit host port, defaults to 8501 |
 | `N8N_PORT` | Local n8n editor/webhook port, defaults to 5678 |
 | `N8N_ENCRYPTION_KEY` | Required stable secret for n8n credential encryption |
 | `GENERIC_TIMEZONE` | n8n instance timezone, defaults to UTC |
@@ -118,6 +123,8 @@ App settings live in `backend/app/core/config.py`; database settings live separa
 | `TEST_DATABASE_URL` | Optional test-only override; database name must end in `_test` |
 
 There is no default password. Separate POSTGRES settings build the URL safely, including passwords with URL special characters. If you supply a full host URL instead, URL-encode its password and keep it consistent with the initialized database. Compose deliberately ignores the host `DATABASE_URL`. Passwords/full URLs use secret settings types and are not printed by application code. Avoid sharing unredacted `docker compose config` or container inspection output, which can include environment values; use `config --quiet` to validate.
+
+Host Python database access and legacy verification scripts require the optional `docker-compose.host-db.yml` override. The default platform exposes PostgreSQL only on its Compose network.
 
 The application database uses `postgres_data`; n8n uses `n8n_data` for its SQLite/configuration storage. Ordinary `docker compose down` preserves both named volumes. **`docker compose down -v` deletes stored data and n8n configuration/workflows.** Changing initialization credentials in `.env` does not change users/passwords inside an existing volume. All published ports bind only to `127.0.0.1`.
 
@@ -254,7 +261,7 @@ n8n/test_workflow.cjs # Exported workflow JavaScript checks
 n8n/test_automation.cjs # Processing response/error and branch checks
 n8n/verify_agent.py   # Real agent webhook/review/audit verification using fake provider
 n8n/test_agent.cjs    # Agent workflow response, fallback and safety checks
-dashboard/           # Placeholder only
+dashboard/           # Streamlit UI and FastAPI-only client; separate Docker image
 database/
 sample-data/
 docs/

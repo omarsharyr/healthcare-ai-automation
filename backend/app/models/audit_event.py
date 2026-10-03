@@ -1,10 +1,12 @@
 from datetime import datetime
+from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, String, func, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, String, Uuid, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.core.correlation import current_correlation_id
 
 
 class AuditEvent(Base):
@@ -16,6 +18,7 @@ class AuditEvent(Base):
     )
     event_type: Mapped[str] = mapped_column(String(64))
     actor: Mapped[str] = mapped_column(String(64))
+    correlation_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True, default=current_correlation_id)
     # DeclarativeBase reserves 'metadata'; keep the requested SQL column name.
     event_metadata: Mapped[dict[str, str]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb"),
